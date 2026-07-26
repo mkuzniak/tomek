@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Album rodzinny</title>
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --surface: #121216;
+            --border: rgba(255, 255, 255, 0.06);
+            --accent: #d4af37;
+            --text: #f1f1f3;
+            --text-muted: #8e8e93;
+            --danger: #ff4757;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 320px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 40px 30px;
+            position: fixed;
+            height: 100vh;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        .album-header h1 {
+            font-size: 1.8rem;
+            margin: 0 0 10px 0;
+        }
+
+        .album-header p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin: 0 0 40px 0;
+        }
+
+        /* EKSTREMALNIE MAŁY I ZGRABNY PANEL */
+        .upload-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            padding: 12px;
+            border-radius: 12px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .upload-box label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Malutki aparat */
+        .camera-svg {
+            color: var(--text-muted);
+            width: 14px;
+            height: 14px;
+        }
+
+        input[type="file"] {
+            display: block;
+            width: 100%;
+            color: var(--text);
+            font-size: 0.75rem;
+        }
+
+        .main-content {
+            margin-left: 320px;
+            flex-grow: 1;
+            padding: 50px;
+            box-sizing: border-box;
+        }
+
+        .album-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            width: 100%;
+        }
+
+        .album-item {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .album-item img, .album-item video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        /* PODPIS ZDJĘCIA / FILMIKU */
+        .media-title {
+            padding: 10px 12px;
+            font-size: 0.85rem;
+            color: var(--text);
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid var(--border);
+            word-break: break-word;
+            text-align: center;
+        }
+
+        /* MINIMATUROWY KRZYŻYK USUWANIA */
+        .delete-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: rgba(255, 71, 87, 0.95);
+            color: white;
+            border: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            font-size: 0.75rem;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            z-index: 99;
+        }
+
+        .album-item:hover .delete-btn {
+            opacity: 1;
+        }
+
+        .delete-btn:hover {
+            background: var(--danger);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="album-header">
+            <h1>Zdjęcia i filmiki rodzinne</h1>
+            <p>Rodzinna galeria wspomnień</p>
+        </div>
+
+        <div class="upload-box">
+            <svg class="camera-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+            <label>Wybierz zdjęcia lub wideo:</label>
+            <input type="file" id="file-input" accept="image/,video/" multiple>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="album-grid" id="album-grid"></div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const albumGrid = document.getElementById('album-grid');
+        
+        let db;
+
+        // Inicjalizacja bazy danych IndexedDB w przeglądarce
+        const request = indexedDB.open("FamilyAlbumDB", 1);
+
+        request.onupgradeneeded = function(e) {
+            db = e.target.result;
+            if (!db.objectStoreNames.contains("media")) {
+                db.createObjectStore("media", { keyPath: "id", autoIncrement: true });
+            }
+        };
+
+        request.onsuccess = function(e) {
+            db = e.target.result;
+            loadMediaFromDB(); // Wczytaj pliki po uruchomieniu strony
+        };
+
+        // Funkcja renderująca element w galerii z uwzględnieniem tytułu
+        function createMediaElement(fileBlob, id, titleText) {
+            const isVideo = fileBlob.type.startsWith('video/');
+            const isImage = fileBlob.type.startsWith('image/');
+
+            if (!isImage && !isVideo) return;
+
+            const bezpiecznyUrl = URL.createObjectURL(fileBlob);
+            const item = document.createElement('div');
+            item.classList.add('album-item');
+            
+            let mediaElement;
+
+            if (isImage) {
+                mediaElement = document.createElement('img');
+                mediaElement.src = bezpiecznyUrl;
+            } else if (isVideo) {
+                mediaElement = document.createElement('video');
+                mediaElement.src = bezpiecznyUrl;
+                mediaElement.controls = true;
+            }
+
+            const delBtn = document.createElement('button');
+            delBtn.classList.add('delete-btn');
+            delBtn.innerText = '×';
+            
+            delBtn.addEventListener('click', function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                
+                // Usuwanie z bazy danych IndexedDB
+                const transaction = db.transaction(["media"], "readwrite");
+                const store = transaction.objectStore("media");
+                store.delete(id);
+
+                item.remove();
+                URL.revokeObjectURL(bezpiecznyUrl);
+            });
+
+            item.appendChild(mediaElement);
+
+            // Dodanie elementu tekstowego z nazwą pliku
+            if (titleText) {
+                const titleDiv = document.createElement('div');
+                titleDiv.classList.add('media-title');
+                titleDiv.innerText = titleText;
+                item.appendChild(titleDiv);
+            }
+
+            item.appendChild(delBtn);
+            albumGrid.appendChild(item);
+        }
+
+        // Pobieranie wszystkich zapisanych plików z bazy i wyświetlanie ich
+        function loadMediaFromDB() {
+            const transaction = db.transaction(["media"], "readonly");
+            const store = transaction.objectStore("media");
+            const cursorRequest = store.openCursor();
+
+            cursorRequest.onsuccess = function(e) {
+                const cursor = e.target.result;
+                if (cursor) {
+                    // Przekazanie zapisanego tytułu do funkcji renderującej
+                    createMediaElement(cursor.value.blob, cursor.value.id, cursor.value.title);
+                    cursor.continue();
+                }
+            };
+        }
+
+        // Obsługa wyboru nowych plików przez użytkownika
+        fileInput.addEventListener('change', function(e) {
+            const files = this.files;
+            if (!files || files.length === 0) return;
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+
+                // Zapytanie o nazwę dla każdego pliku (podpowiada oryginalną nazwę)
+                const userTitle = prompt(Podaj nazwę dla pliku "${file.name}":, file.name);
+                
+                // Jeśli użytkownik anuluje, pomijamy dodawanie tego pliku
+                if (userTitle === null) continue;
+
+                // Zapisywanie pliku oraz tytułu do bazy danych IndexedDB
+                const transaction = db.transaction(["media"], "readwrite");
+                const store = transaction.objectStore("media");
+                const addRequest = store.add({ blob: file, title: userTitle });
+
+                addRequest.onsuccess = function(e) {
+                    const insertedId = e.target.result;
+                    createMediaElement(file, insertedId, userTitle);
+                };
+            }
+            
+            // Reset inputa, aby można było wybrać ponownie te same pliki
+            this.value = '';
+        });
+    </script>
+</body>
+</html>
